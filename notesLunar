@@ -1,0 +1,131 @@
+Notas: LunarLander: 
+
+Notas: 
+	-Q es la red que toma decisiones  
+	-Q' (la target) es una foto vieja de Q
+	-Muestreo aleatorio en D buffer
+
+	-Que hace pasos de entrenamiento: 
+		Saco un batch al azar de transiciones (s, a, r, s', term) de D.
+		Para cada una, quiero que Q(s)[a] (lo que creo que vale lo que hice) sea igual a lo que realmente pasó, r, más lo que vale el lugar donde caí, s'.
+		Para estimar cuánto vale s': Q elige la mejor acción ahí (a*) y Q', una copia vieja y fija, dice cuánto vale. Lo descuento con γ, y si el episodio terminó no sumo nada del futuro.
+		Eso da la etiqueta y, sin gradiente. Comparo Q(s)[a] con y, promedio el error (Huber) sobre el batch, y backprop + Adam corrigen solo Q.
+		
+
+TODO1 - PseudoCodigo:
+	Inicializar Q (red online)
+	Q' = copia_profunda(Q)
+	D = buffer circular 
+	ε = 1.0 ; pasos = 0
+
+	for ep = 1..N:
+	    s = env.reset()
+	    repeat:
+		a = elegir_accion(Q, s, ε)
+		s', r, term, trunc = env.step(a)
+		D.agregar(s, a, r, s', term)               
+		s = s' ; pasos += 1
+
+		if |D| ≥ warmup and pasos % train_freq == 0:
+		    paso_de_entrenamiento(D)               
+
+		if pasos % C == 0: Q' = copia_pesos(Q) // Cada C = valor pasos actualizo Q'                  
+	    until term or trunc
+	    ε = max(ε_min, ε · decay) // Decrecimiento de epsilon
+
+
+	paso_de_entrenamiento(D)
+		B = muestrear(D, batch_size)
+		con torch.no_grad():
+		    # Double DQN:
+		    a* = argmax_a Q(s', a)                        # Q elige la acción
+		    y  = r + K · (1 − term) · Q'(s', a*)          # Q' la evalúa
+		q = Q(s)[a]                                     # gather por la acción tomada
+		L = Huber(q, y)
+		θ = θ − α ∇θ L                                  # solo se actualiza Q, nunca Q' 
+
+Eleccion de hiperparametros:
+	- Primero usamos como punto de partida valores usados en la literatura. 
+	- Hacemos un random search usando:
+		- Metrica la recompensa media de evaluacion greedy. 
+		- Dos semillas distintas
+		- 16 configuraciones (el tiempo de entrenamiento en 1200 episodios creo que ronda los 200 segundos, si es demasiado 32 entrenamientos usar solo 600 episodios). 
+	- Valores para el RS:
+		- Learning Rate: 1e-4 a 2e-3 (Muestreo - Log uniforme)
+		- Gamma: 0.98 0.99 0.995
+		- Batach size: 32 64 128
+		- Frecuencia de la red target: 250 500 1000 2000 pasos
+		- Fraccion de exploracion: 0.3 0.5 0.7 
+		- Neuronas de la capa oculta: 64 128 256
+	
+
+
+TODO2 - Analisis de la politica: 
+Fijamos ciertos parametros del estado para mostrar las acciones elegidas.
+Estado = [posición x, posición y, velocidad x, velocidad y, ángulo, velocidad angular, contacto pata 1, contacto pata 2];
+Posibles estados de analisis: 
+	1. Caida en linea recta - Variar velocidad - Variar velocidad angular - Variar altura. 
+	2. Caida hacia un costado (tiene que enderezar y caer entre las banderas).
+	3. Una pata ya apoyada.	(Problema donde se queda con el propulsor prendido para no desplizarse hacia abajo - semilla 28585) 
+	4. Forzar una posicion de inicio donde aparezca dado vuelta (no visto en entrenamiento?).
+	5. Comienzo desde una punta en vez de medio.
+	
+	
+TODO3: Estudio de ablacion:
+Remuevo partes de la solucion DQN para ver como funciona sin ellas. Evaluado en varias semillas con un test estadistico. 
+Variantes que remuevo:
+	- Sin target 
+	- Sin double
+	- Sin huber
+	- Con bonus banderas
+	- Sin replay
+
+
+
+
+Informe: 
+	1. Descripcion de la solucion DQN - Double DQN - Decaimiento de epsilon - Batch train 
+	2. Busqueda de hiperparametros:
+		- Antes de las busquedas automaticas probamos modificar distintos hiperparametros a mano para ver su efecto en el entrenamiento. En busqueda de un agente con 100% se modifico el delta en huber, la recompensa en los propulsores laterales. Recien haciendo el TODO2 nos damos cuenta que para corregir los casos donde la nave queda con una pata dentro y una fuera de las banderas (inclinado) (la nave no se estrella, pero queda bloqueada en esos casos) modificar la recompensa por quedar en el centro de las banderas con ambas patas ayudaria a prevenir que el agente vaya hacia los bordes. 
+		- Primero una busqueda gruesa en otra iteracion: Deja informacion sobre que hiperparametros afectan mas y reduce la busqueda a menos y mejores valores. 
+		- Busqueda inicial no aleatoria a partir de la informacion anterior. Con menos configuraciones nos permite usar el computo en mas semillas (20).
+		- A partir de la segunda busqueda mas precisa hacemos esta tercera. Tomamos las mejores 6 configuraciones y las probamos con 1200 episodios y 30 semillas obteniendo la 11. Tal vez serian necesarias mas semillas para asegurar que la mejor, pero podemos afirmar que es de las mejores y muy buena asi que basta.  
+	3. En 200 episodios la configuracion 11 (sin la modificacion de recompensa) da ~92.5% ampliamente superior al 0% del agente aleatorio. 
+	4. Analisis de la politica. Separamos en casos que podrian ser de interes: 
+		- Uno cayendo recto para ver cuando prende el motor principal.
+		- Uno cayendo de costado para ver como se endereza.
+		- Uno donde no empieze en el centro y se tenga que ir hacia alli. 
+		- Uno en el borde, el caso donde queda inclinado con una pata dentro y otra fuera de las banderas. Efectivamente toma la mejor decision que es propulsor lateral para no deslizarse pero no deberia llegar hasta esa situacion.
+	5. Estudio de abalacion. Variantes:
+		- Sin target 
+		- Sin double
+		- Sin huber
+		- Con bonus banderas
+		- Sin replay
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
