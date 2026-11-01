@@ -88,20 +88,22 @@ Informe:
 	2. Busqueda de hiperparametros:
 		- Antes de las busquedas automaticas probamos modificar distintos hiperparametros a mano para ver su efecto en el entrenamiento. En busqueda de un agente con 100% se modifico el delta en huber, la recompensa en los propulsores laterales. Recien haciendo el TODO2 nos damos cuenta que para corregir los casos donde la nave queda con una pata dentro y una fuera de las banderas (inclinado) (la nave no se estrella, pero queda bloqueada en esos casos) modificar la recompensa por quedar en el centro de las banderas con ambas patas ayudaria a prevenir que el agente vaya hacia los bordes. 
 		- Primero una busqueda gruesa en otra iteracion: Deja informacion sobre que hiperparametros afectan mas y reduce la busqueda a menos y mejores valores. 
-		- Busqueda inicial no aleatoria a partir de la informacion anterior. Con menos configuraciones nos permite usar el computo en mas semillas (20).
+		- Busqueda aleatoria (random search balanceado: lr log-uniforme y los demas valores repartidos parejo) en el espacio reducido por la busqueda gruesa: 12 configuraciones + la de referencia, 600 episodios. Con menos configuraciones nos permite usar el computo en mas semillas (20). 
 		- A partir de la segunda busqueda mas precisa hacemos esta tercera. Tomamos las mejores 6 configuraciones y las probamos con 1200 episodios y 30 semillas obteniendo la 11. Tal vez serian necesarias mas semillas para asegurar que la mejor, pero podemos afirmar que es de las mejores y muy buena asi que basta.  
 	3. En 200 episodios la configuracion 11 (sin la modificacion de recompensa) da ~92.5% ampliamente superior al 0% del agente aleatorio. 
 	4. Analisis de la politica. Separamos en casos que podrian ser de interes: 
 		- Uno cayendo recto para ver cuando prende el motor principal.
 		- Uno cayendo de costado para ver como se endereza.
 		- Uno donde no empieze en el centro y se tenga que ir hacia alli. 
-		- Uno en el borde, el caso donde queda inclinado con una pata dentro y otra fuera de las banderas. Efectivamente toma la mejor decision que es propulsor lateral para no deslizarse pero no deberia llegar hasta esa situacion.
-	5. Estudio de abalacion. Variantes:
-		- Sin target 
-		- Sin double
-		- Sin huber
-		- Con bonus banderas
-		- Sin replay
+		- Uno en el borde, el caso donde queda inclinado con las dos patas apoyadas, una dentro y otra fuera de las banderas. Ahi alterna entre no hacer nada y el propulsor lateral que empuja hacia el centro: las Q de las dos acciones estan casi empatadas (diferencia ~0.03), el estado cae justo en la frontera. El lateral evita que se deslice por la pendiente, pero cada encendido reinicia la cuenta con la que Box2D "duerme" la nave, asi que nunca cobra el +100 y el episodio se trunca a los 1000 pasos. Una vez ahi no hay una buena accion (sin laterales se desliza hacia afuera o choca): el problema es llegar a esa situacion.
+	5. Estudio de ablacion. Variantes:
+			- Sin target (C = 1: Q' = Q en cada paso, asi que tambien apaga Double. El efecto propio del target sale de comparar contra sin double)
+			- Sin double
+			- Sin huber (MSE cruda: con ella el recorte del gradiente actua en casi todos los pasos)
+			- Sin replay (solo las ultimas 128 transiciones, cada una usada 32 veces como con el buffer)
+			- Con bonus banderas (no es ablacion: agrega en vez de quitar, va como experimento extra)
+		Explicacion de los test estadisticos realizados. Mirar archivo de explicacion. 
+		
 
 
 
